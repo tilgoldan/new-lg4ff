@@ -41,6 +41,7 @@ following ones:
 - Rate limited FF updates with best possible latency.
 - Tunable sprint, damper and friction effects gain.
 - It can combine accelerator and clutch.
+- Invert pedal values
 - Use the wheel leds as a FFBmeter to monitor clipping.
 - Added a system gain setting that modulates the gain setting used by
   applications.
@@ -207,6 +208,11 @@ get and set property values.
 
 This entry already existed. It has been extended, setting the value to 2
 combines the clutch and gas pedals in the same axis.
+
+### invert_pedals
+
+Inverts the pedals. The inversion is controlled by a bit field, allowing for
+individual inversion of each pedal.
 
 ### gain
 

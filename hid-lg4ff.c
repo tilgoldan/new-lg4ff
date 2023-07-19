@@ -132,6 +132,7 @@ struct lg4ff_slot {
 struct lg4ff_wheel_data {
 	const u32 product_id;
 	u16 combine;
+	u16 invert;
 	u16 range;
 	u16 autocenter;
 	u16 master_gain;
@@ -1131,16 +1132,10 @@ int lg4ff_adjust_input_event(struct hid_device *hid, struct hid_field *field,
 	}
 }
 
-int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
-		u8 *rd, int size, struct lg_drv_data *drv_data)
+int lg4ff_combine_pedals(struct lg4ff_device_entry *entry, u8 *rd)
 {
 	int offset;
-	struct lg4ff_device_entry *entry = drv_data->device_props;
 
-	if (!entry)
-		return 0;
-
-	/* adjust HID report present combined pedals data */
 	if (entry->wdata.combine == 1) {
 		switch (entry->wdata.product_id) {
 		case USB_DEVICE_ID_LOGITECH_WHEEL:
@@ -1203,6 +1198,84 @@ int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
 	return 0;
 }
 
+int lg4ff_invert_pedals(struct lg4ff_device_entry *entry, u8 *rd)
+{
+	int offset;
+	int ret = 0;
+
+	switch (entry->wdata.product_id) {
+		case USB_DEVICE_ID_LOGITECH_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_DFP_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_G27_WHEEL:
+			offset = 5;
+			break;
+		case USB_DEVICE_ID_LOGITECH_WINGMAN_FG:
+		case USB_DEVICE_ID_LOGITECH_WINGMAN_FFG:
+		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_MOMO_WHEEL2:
+			offset = 4;
+			break;
+		case USB_DEVICE_ID_LOGITECH_DFGT_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
+		case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
+			offset = 6;
+			break;
+		case USB_DEVICE_ID_LOGITECH_WII_WHEEL:
+			offset = 3;
+			break;
+		default:
+			return 0;
+	}
+
+	if (entry->wdata.invert & 0b001) {
+		rd[offset] = 0xFF - rd[offset];
+		ret = 1;
+	}
+
+	if (entry->wdata.invert & 0b010) {
+		rd[offset+1] = 0xFF - rd[offset+1];
+		ret = 1;
+	}
+
+	if (entry->wdata.invert & 0b100) {
+		switch (entry->wdata.product_id) {
+			case USB_DEVICE_ID_LOGITECH_G25_WHEEL:
+			case USB_DEVICE_ID_LOGITECH_G27_WHEEL:
+			case USB_DEVICE_ID_LOGITECH_G29_WHEEL:
+			case USB_DEVICE_ID_LOGITECH_G923_WHEEL:
+				break;
+			default:
+				return ret;
+		}
+
+		rd[offset+2] = 0xFF - rd[offset+2];
+		ret = 1;
+	}
+
+	return ret;
+}
+
+int lg4ff_raw_event(struct hid_device *hdev, struct hid_report *report,
+						u8 *rd, int size, struct lg_drv_data *drv_data)
+{
+	int ret = 0;
+	struct lg4ff_device_entry *entry = drv_data->device_props;
+
+	if (!entry)
+		return 0;
+	
+	/* adjust HID report present combined pedals data */
+	if(entry->wdata.combine)
+		ret = lg4ff_combine_pedals(entry, rd);
+
+	/* adjust HID report present invert pedals data */
+	if (entry->wdata.invert)
+		ret = lg4ff_invert_pedals(entry, rd) || ret;
+
+	return ret;
+}
+
 static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const struct lg4ff_wheel *wheel,
 				  const struct lg4ff_multimode_wheel *mmode_wheel,
 				  const u16 real_product_id)
@@ -1221,6 +1294,7 @@ static void lg4ff_init_wheel_data(struct lg4ff_wheel_data * const wdata, const s
 		struct lg4ff_wheel_data t_wdata =  { .product_id = wheel->product_id,
 						     .real_product_id = real_product_id,
 						     .combine = 0,
+						     .invert = 0,
 						     .min_range = wheel->min_range,
 						     .max_range = wheel->max_range,
 						     .set_range = wheel->set_range,
@@ -1701,6 +1775,43 @@ static ssize_t lg4ff_combine_store(struct device *dev, struct device_attribute *
 	return count;
 }
 static DEVICE_ATTR(combine_pedals, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_combine_show, lg4ff_combine_store);
+
+static ssize_t lg4ff_invert_show(struct device *dev, struct device_attribute *attr,
+								  char *buf)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	size_t count;
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL)
+	{
+		return -EINVAL;
+	}
+
+	count = scnprintf(buf, PAGE_SIZE, "%u\n", entry->wdata.invert);
+	return count;
+}
+
+static ssize_t lg4ff_invert_store(struct device *dev, struct device_attribute *attr,
+								  const char *buf, size_t count)
+{
+	struct hid_device *hid = to_hid_device(dev);
+	struct lg4ff_device_entry *entry;
+	u16 invert = simple_strtoul(buf, NULL, 10);
+
+	entry = lg4ff_get_device_entry(hid);
+	if (entry == NULL)
+	{
+		return -EINVAL;
+	}
+
+	invert = invert & 0b111;
+
+	entry->wdata.invert = invert;
+	return count;
+}
+static DEVICE_ATTR(invert_pedals, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH, lg4ff_invert_show, lg4ff_invert_store);
 
 /* Export the currently set range of the wheel */
 static ssize_t lg4ff_range_show(struct device *dev, struct device_attribute *attr,
@@ -2349,6 +2460,9 @@ int lg4ff_init(struct hid_device *hid)
 	error = device_create_file(&hid->dev, &dev_attr_combine_pedals);
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"combine\", errno %d\n", error);
+	error = device_create_file(&hid->dev, &dev_attr_invert_pedals);
+	if (error)
+		hid_warn(hid, "Unable to create sysfs interface for \"invert\", errno %d\n", error);
 	error = device_create_file(&hid->dev, &dev_attr_range);
 	if (error)
 		hid_warn(hid, "Unable to create sysfs interface for \"range\", errno %d\n", error);
@@ -2453,6 +2567,7 @@ int lg4ff_deinit(struct hid_device *hid)
 	}
 
 	device_remove_file(&hid->dev, &dev_attr_combine_pedals);
+	device_remove_file(&hid->dev, &dev_attr_invert_pedals);
 	device_remove_file(&hid->dev, &dev_attr_range);
 
 	if (dev->ffbit) {
